@@ -37,61 +37,86 @@ data$inactive_status[data$inactive_status == 'FALSE'] <- 0
 data$bug_occured[data$bug_occured == 'TRUE'] <- 1
 data$bug_occured[data$bug_occured == 'FALSE'] <- 0
 
-#creating a dataset for unique customers (in theory, new users) - may or may not get to this
+#changing durations to minutes to better understand the data
 
-unique_id <- unique(data$customer_id)
-
-
-#for now, we won't need session_id or customer_id, date, or inactive_duration
-data_original <- data
-data <- subset(data_original,select = -c(session_id,customer_id, login_date, inactive_duration))
+data$session_duration <- data$session_duration/60
+data$inactive_duration <- data$inactive_duration/60
 
 #For the sake of this assignment, given the data we will assume that "user engagement" relates mostly to whether they are "browsing"
 #doing things like giving likes and comments and spending more time on Showwcase.
 
+#therefore, we will define an engaged user who has liked, commented, or posted a project in their session.
+# we will also create an "engagement score" from 1-3 based upon how many actions they placed in their session (likes, comments, projects)
 
-#We want to get some insights from GLM and Random Forest as to what might increase user engagements
+data <- data %>% mutate(engaged = ifelse(sum(projects_added+likes_given+comment_given) >= 1, 1, 0),
+                        engage_score = projects_added + comment_given + likes_given)
+
+#now if we examine engaged and egagement_score we can see that all of our users in this data are "engaged", atleast by our minimum standard.
+#That's totally fine but it means we need to expand our metric some more.
+hist(data$engage_score)
+
+#Looking at our data, our most useful metrics are probably the numbers of likes and comments as well as the session duration. Lets add points 
+#to user engagements score based on how many comments and likes they give, and how long their session was.
+
+hist(data$engaged)
+hist(data$engage_score)
+
+med_comments <- median(data$session_comments_given)
+med_likes <- median(data$session_likes_given)
+avg_session <- mean(data$session_duration)
 
 
-#we'll start with glmsince it will sort of be our frame of reference
-  #rreframing the data without unecessary values
+data <- data %>% mutate(engage_score = projects_added + comment_given + likes_given + trunc(session_likes_given/med_likes)
+                        + trunc(session_comments_given/med_comments) 
+                        + trunc(session_duration/avg_session))
+
+hist(data$engage_score) #looks a lot better!
+
+#lets also save this so we can load it into Tableau
+library(readr)
+write.csv(data, file = 'data.csv')
 
 
-#splitting
-split <- sample.split(data, SplitRatio = .75)
-training_set <- subset(data, split == TRUE)
-test_set <- subset(data, split == FALSE)
+#We want to get some insights from GLM and Decision Trees as to what the models think might increase user engagement status
+
+
+#we'll start with glm 
+#reframing the data without unnecessary values
+training_set <- subset(data, select = c(session_projects_added,session_likes_given,session_comments_given, inactive_duration, session_duration, bugs_in_session,engage_score))
+
 
 
 #building glm classifier
-classifier_duration_glm <- glm(session_duration~., family = gaussian, data = training_set)
-classifier_duration
-plot(classifier_duration)
+classifier_glm <- glm(engage_score~., family = gaussian, data = training_set)
+classifier_glm
+plot(classifier_glm)
 
 
-#building randomforest
+#building a decision tree
 library(tree)
-tree_duration <- tree(session_duration~., data = training_set)
+tree_duration <- tree(engage_score~., data = training_set)
 tree_duration
 plot(tree_duration)
-text(tree_duration, pretty = 10)
+text(tree_duration, pretty = 20)
 
-#we should always text survival bias to make sure we are examining the data from all sides, which in this case means we should see what GLM thinks
-
-#creating survival data
-survival_data <- data_original
-survival_data <- subset(survival_data, select = -c(session_duration, login_date,session_id,customer_id, inactive_status))
-
-split_2 <- sample.split(survival_data, SplitRatio = .75)
-training_set <- subset(survival_data, split == TRUE)
-test_set <- subset(survival_data, split == FALSE)
+#if you view the metrics for our ML models, you can see they are basicly worthless because of the lack of predictive value in the dataset.
 
 
-#building glm classifier
-classifier_duration_glm_survivor <- glm(inactive_duration~., family = gaussian, data = training_set)
-classifier_duration_glm_survivor
-plot(classifier_duration_glm_survivor)
+#------ Graphics ------
+#install.packages("ggthemes")
+library(ggthemes)
+#plotting session_duration
+duration_plot <- data %>% ggplot(aes(session_duration))+geom_histogram()+geom_vline(xintercept = mean(data$session_duration))+theme_igray()
+duration_plot <- duration_plot +ggtitle('Session Duration Plot')
+duration_plot
 
+#plotting inactivity
+inactivity_plot <- data %>% ggplot(aes(inactive_duration))+geom_histogram() + geom_vline(xintercept = mean(data$inactive_duration))+theme_igray()
+inactivity_plot <- inactivity_plot + ggtitle("Inactivity Duration Plot")
+inactivity_plot
 
-
-
+#plot of engage_score
+engage_plot <- data %>% ggplot(aes(engage_score)) + geom_histogram()+ geom_vline(xintercept = mean(data$engage_score))+theme_igray()
+engage_plot <- engage_plot+ggtitle("Engagement Histogram")
+engage_plot
+ggsave("engagement.png")
